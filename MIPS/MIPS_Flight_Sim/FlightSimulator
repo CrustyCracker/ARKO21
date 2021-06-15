@@ -1,0 +1,210 @@
+#-------------------------------------------------------------------------------
+# Name: Mateusz £ukasz Krakowski
+# Index number: 310772
+# Ball Flight Simulator in 64FPS
+# The Program draws a pixel in the balls position every 1/64 of a secound
+# User is asked for initial height, horisontal valocity and the gravitational acceleration
+# so the program can draw a graph for a ball with given variables
+# The ball is losing 1/9 of its valocity when it bounces
+#-------------------------------------------------------------------------------
+# Registers:
+#	$a0 - x coordinate as int
+#	$a1 - y coordinate as int
+#	$a2 - 0x00RRGGBB - pixel color
+#-------------------------------------------------------------------------------
+#	$s0 - x coordinate for calculations
+#	$s1 - y coordinate for calculations
+#	$s2 - horisontal valocity	
+#	$s3 - vertical valocity	
+#	$s4 - gravitational acceleration ; value to add to vertical valocity
+#-------------------------------------------------------------------------------
+
+#only 24-bits 1600x800px BMP files are supported
+
+.eqv BMP_FILE_SIZE 3840122
+.eqv BYTES_PER_ROW 4800
+.eqv BALL_COLOUR 0x00000000 #Ball Colour 0x00RRGGBB
+
+	.data
+.align 4
+res:	.space 2
+image:	.space BMP_FILE_SIZE
+
+fname:	.asciiz "map3.bmp"
+
+height_prompt:        .asciiz "Enter initial height (in px)\n"
+velocity_prompt:        .asciiz "Enter horizontal velocity(in px/s * 2^14)\n"
+acceleration_prompt:        .asciiz "Enter gravitational acceleration(in px/(s^2) * 2^7) \n"
+
+.text
+load_data:
+	la $a0, height_prompt 
+	li $v0, 4 #ask for height
+	syscall
+
+	li $v0, 5
+	syscall
+	move $s1, $v0 # move height to $s0
+
+	la $a0, velocity_prompt
+	li $v0, 4 #ask for velocity
+	syscall    
+    
+	li $v0, 5
+	syscall
+	move $s2, $v0 # move horizontal velocity to $s2
+
+	la $a0, acceleration_prompt
+	li $v0, 4 #ask for acceleration
+	syscall
+	
+	li $v0, 5
+	syscall
+	move $s4, $v0  # move acceleration to $s4
+prepare_data:
+	sll $s1, $s1, 20
+	jal read_bmp #read the bmp into ram memory
+
+first_pixel:
+	li $a2, BALL_COLOUR
+	li  $a0, 0 #set start cord to 0
+	srl $a1, $s1, 20 #set ycord to $s1
+	
+	la $t1, image + 10	#adress of file offset to pixel array
+	lw $t2, ($t1)		#file offset to pixel array in $t2
+	la $t1, image		#adress of bitmap
+	add $t2, $t1, $t2	#adress of pixel array in $t2
+	
+	#calculate px address
+	mul $t1, $a1, BYTES_PER_ROW #t1= y*BYTES_PER_ROW
+	move $t3, $a0		
+	sll $a0, $a0, 1
+	add $t3, $t3, $a0	#$t3= 3*x
+	add $t1, $t1, $t3	#$t1 = 3x + y*BYTES_PER_ROW
+	add $t2, $t2, $t1	#pixel address 
+
+	#set new color of the px
+	sb $a2,($t2)		#store B
+	srl $a2,$a2,8		
+	sb $a2,1($t2)		#store G
+	srl $a2,$a2,8
+	sb $a2,2($t2)		#store R
+
+
+	add $s3, $s3, $s4 #add acceletation to velocity
+	sub $s1, $s1, $s3 #change balls y coordinate
+	add $s0, $s0, $s2 #change balls x coordinate
+
+	sll $s4, $s4, 1 # multiply the acc value for later calculations
+
+loop:
+	srl $a0, $s0, 20 #get x_cord
+	srl $a1, $s1, 20 #sget y_cord
+	li $a2, BALL_COLOUR 
+	
+	la $t1, image + 10	#adress of file offset to pixel array
+	lw $t2, ($t1)		#file offset to pixel array in $t2
+	la $t1, image		#adress of bitmap
+	add $t2, $t1, $t2	#adress of pixel array in $t2
+	
+	#calculate px address
+	mul $t1, $a1, BYTES_PER_ROW #t1= y*BYTES_PER_ROW
+	move $t3, $a0		
+	sll $a0, $a0, 1
+	add $t3, $t3, $a0	#$t3= 3*x
+	add $t1, $t1, $t3	#$t1 = 3x + y*BYTES_PER_ROW
+	add $t2, $t2, $t1	#pixel address 
+
+	#set new color of the px
+	sb $a2,($t2)		#store B
+	srl $a2,$a2,8		
+	sb $a2,1($t2)		#store G
+	srl $a2,$a2,8
+	sb $a2,2($t2)		#store R
+
+	
+	add $s3, $s3, $s4 #add acceletation to velocity
+	sub $s1, $s1, $s3 #change balls y coordinate
+	add $s0, $s0, $s2 #change balls x coordinate
+
+	bgez $s1, continue_loop #if condition not met, perform the bounce
+	li $s1, 10
+	# Multyply the valocity by 8/9
+	divu $s2, $s2, 9 
+	sll $s2, $s2, 3
+	divu $s3, $s3, 9 
+	sll $s3, $s3, 3
+
+	subu $s3, $zero, $s3 #reverse the vertical valocity vector
+	
+continue_loop:
+	blt $s2, 50, exit #prevent infinte loops where horisontal velocity is too low
+	blt $s0, 1675624448, loop # branch to loop if the ball didn't reach the right wall
+exit:
+	jal	save_bmp
+	li 	$v0,10		#Terminate the program
+	syscall
+
+# ============================================================================
+read_bmp:
+# reads the contents of a bmp file into memory
+
+	sub $sp, $sp, 4		#push $s1
+	sw $s1, 0($sp)
+#open file
+	li $v0, 13
+        la $a0, fname		#file name 
+        li $a1, 0		#flags: 0-read file
+        li $a2, 0		#mode: ignored
+        syscall
+	move $s1, $v0      # save the file descriptor
+
+#read file
+	li $v0, 14
+	move $a0, $s1
+	la $a1, image
+	li $a2, BMP_FILE_SIZE
+	syscall
+
+#close file
+	li $v0, 16
+	move $a0, $s1
+        syscall
+	
+	lw $s1, 0($sp)		#restore (pop) $s1
+	add $sp, $sp, 4
+	jr $ra
+
+# ============================================================================
+save_bmp:
+# saves bmp file stored in memory to a file
+
+	sub $sp, $sp, 4		#push $s1
+	sw $s1, 0($sp)
+#open file
+	li $v0, 13
+        la $a0, fname		#file name 
+        li $a1, 1		#flags: 1-write file
+        li $a2, 0		#mode: ignored
+        syscall
+	move $s1, $v0      # save the file descriptor
+
+#save file
+	li $v0, 15
+	move $a0, $s1
+	la $a1, image
+	li $a2, BMP_FILE_SIZE
+	syscall
+
+#close file
+	li $v0, 16
+	move $a0, $s1
+        syscall
+	
+	lw $s1, 0($sp)		#restore (pop) $s1
+	add $sp, $sp, 4
+
+	jr $ra
+
+
+
